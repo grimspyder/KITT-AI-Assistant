@@ -1,0 +1,346 @@
+// KITT main dashboard — authentic 3-bar voice modulator layout per reference.
+// Left: AIR, OIL, P1, P2. Right: S1, S2, P3, P4.
+// Center-bottom: AUTO CRUISE, NORMAL CRUISE, PURSUIT.
+// Deep black background; no cards/gradients/modern UI.
+
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import VoiceModulator from './VoiceModulator';
+import { ConversationEngine } from '@/lib/conversation/engine';
+import { KITTSettings, DEFAULT_SETTINGS } from '@/lib/config/settings';
+import { loadSettings, saveSettings, deleteSecrets } from '@/lib/config/storage';
+import { MachineSnapshot } from '@/lib/conversation/stateMachine';
+import { computeBarLevels, BarLevels, DEFAULT_TUNING, ModulatorTuning } from '@/lib/audio/modulator';
+import SettingsPanel from './SettingsPanel';
+import { listMics } from '@/lib/stt/mic';
+
+type Status = 'OFFLINE' | 'LISTENING' | 'THINKING' | 'SPEAKING' | 'ERROR';
+const STATUS_LABEL: Record<Status, string> = {
+  OFFLINE: 'SYSTEM OFFLINE',
+  LISTENING: 'LISTENING',
+  THINKING: 'THINKING',
+  SPEAKING: 'SPEAKING',
+  ERROR: 'SYSTEM FAULT',
+};
+
+const STATUS_COLOR: Record<Status, string> = {
+  OFFLINE: '#777',
+  LISTENING: '#ffd400',
+  THINKING: '#ff8c00',
+  SPEAKING: '#ff1a1a',
+  ERROR: '#ff1a1a',
+};
+
+export default function KittDashboard() {
+  const [settings, setSettings] = useState<KITTSettings>(DEFAULT_SETTINGS);
+  const [machine, setMachine] = useState<MachineSnapshot>({ state: 'DISCONNECTED', history: [] });
+  const [showSettings, setShowSettings] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
+  const [interim, setInterim] = useState('');
+  const [latency, setLatency] = useState<string>('');
+  const [inputLevel, setInputLevel] = useState(0);
+  const [micList, setMicList] = useState<MediaDeviceInfo[]>([]);
+
+  const engineRef = useRef<ConversationEngine | null>(null);
+  const levelsRef = useRef<BarLevels>({ left: 0, center: 0, right: 0 });
+  const lastTickRef = useRef<number>(0);
+  const tuningRef = useRef<ModulatorTuning>({ ...DEFAULT_TUNING });
+  const synthEnvRef = useRef<{ active: boolean; value: number; t0: number }>({ active: false, value: 0, t0: 0 });
+
+  // load settings
+  useEffect(() => {
+    void loadSettings().then((s) => {
+      setSettings(s);
+    });
+    void listMics().then(setMicList);
+  }, []);
+
+  useEffect(() => {
+    tuningRef.current.smoothing = settings.display.smoothing;
+    tuningRef.current.releaseMs = 70 + settings.display.smoothing * 90;
+    tuningRef.current.attackMs = 15 + (1 - settings.display.smoothing) * 25;
+  }, [settings.display.smoothing]);
+
+  const getLevels = useCallback((): BarLevels | null => {
+    const engine = engineRef.current;
+    if (!engine || !engine.isActive()) return null;
+    const now = performance.now();
+    const dt = Math.min(100, now - (lastTickRef.current || now));
+    lastTickRef.current = now;
+
+    // Only KITT's OUTPUT audio drives the bars.
+    let bands = { low: 0, mid: 0, high: 0 };
+    let rms = 0;
+    if (engine.pipeline.hasOutput) {
+      rms = engine.pipeline.rms();
+      bands = engine.pipeline.bands();
+    } else if (synthEnvRef.current.active) {
+      // browser speechSynthesis fallback: synthetic envelope driven by state
+      const t = (now - synthEnvRef.current.t0) / 1000;
+      rms = (0.18 + 0.1 * Math.sin(t * 9) + 0.06 * Math.sin(t * 23.7)) * (0.7 + 0.3 * Math.sin(t * 1.7));
+      bands = { low: rms * 0.9, mid: rms * 1.1, high: rms * 0.7 };
+    }
+    levelsRef.current = computeBarLevels(bands, rms, tuningRef.current, levelsRef.current, dt);
+    return levelsRef.current;
+  }, []);
+
+  const handleTranscript = useCallback((role: 'user' | 'assistant', text: string, isInterim?: boolean) => {
+    if (isInterim) {
+      setInterim(text);
+      return;
+    }
+    setInterim('');
+    setTranscript((t) => [...t.slice(-50), { role, text }]);
+  }, []);
+
+  const startConversation = useCallback(async () => {
+    setError(null);
+    let engine = engineRef.current;
+    if (!engine) {
+      engine = new ConversationEngine(settings);
+      engineRef.current = engine;
+    } else {
+      engine.updateSettings(settings);
+    }
+    engine.setMicLevelCallback((l) => setInputLevel(l));
+    await engine.start({
+      onState: (m) => setMachine(m),
+      onTranscript: handleTranscript,
+      onLatency: (t) => {
+        if (t.firstPlayback && t.utteranceEnd) {
+          setLatency(`${Math.round(t.firstPlayback - t.utteranceEnd)} ms`);
+        }
+      },
+      onError: (msg) => setError(msg),
+    });
+  }, [settings, handleTranscript]);
+
+  const stopConversation = useCallback(() => {
+    engineRef.current?.stop();
+    engineRef.current = null;
+    setMachine({ state: 'DISCONNECTED', history: [] });
+    synthEnvRef.current.active = false;
+  }, []);
+
+  const interrupt = useCallback(() => {
+    engineRef.current?.interrupt();
+  }, []);
+
+  const sendText = useCallback(async (text: string) => {
+    const engine = engineRef.current;
+    if (engine) {
+      synthEnvRef.current.active = true;
+      synthEnvRef.current.t0 = performance.now();
+      await engine.sendText(text);
+      synthEnvRef.current.active = false;
+    } else {
+      // auto-start conversation on first text input
+      await startConversation();
+      setTimeout(() => void engineRef.current?.sendText(text), 400);
+    }
+  }, [startConversation]);
+
+  // Derive status
+  const status: Status = (() => {
+    switch (machine.state) {
+      case 'LISTENING': return 'LISTENING';
+      case 'PROCESSING': return 'THINKING';
+      case 'SPEAKING': return 'SPEAKING';
+      case 'ERROR': return 'ERROR';
+      case 'INTERRUPTED': return 'LISTENING';
+      default: return 'OFFLINE';
+    }
+  })();
+
+  useEffect(() => {
+    if (status === 'SPEAKING' && settings.tts.provider === 'browser') {
+      synthEnvRef.current.active = true;
+      synthEnvRef.current.t0 = performance.now();
+    } else if (status !== 'SPEAKING') {
+      synthEnvRef.current.active = false;
+    }
+  }, [status, settings.tts.provider]);
+
+  // wake lock during active conversation
+  useEffect(() => {
+    let sentinel: { release: () => Promise<void> } | null = null;
+    const nav = navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } };
+    if (machine.state !== 'DISCONNECTED' && machine.state !== 'ERROR' && nav.wakeLock) {
+      nav.wakeLock.request('screen').then((s) => { sentinel = s; }).catch(() => undefined);
+    }
+    return () => { void sentinel?.release().catch(() => undefined); };
+  }, [machine.state]);
+
+  const pill = (label: string, bg: string, color: string, extra?: React.CSSProperties): React.CSSProperties => ({
+    background: bg,
+    color,
+    borderRadius: 999,
+    padding: '4px 12px',
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    fontFamily: 'var(--kitt-font, Arial, sans-serif)',
+    fontSize: 'clamp(9px, 1.6vw, 14px)',
+    textAlign: 'center',
+    whiteSpace: 'pre-line',
+    boxShadow: 'none',
+    ...extra,
+  });
+
+  const yellow = '#ffd400';
+  const orange = '#ff7a00';
+  const red = '#e01414';
+
+  return (
+    <div className="kitt-root" style={{ background: '#000', minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#ddd', overflow: 'hidden' }}>
+      <div
+        className="kitt-display"
+        style={{
+          position: 'relative',
+          width: 'min(92vw, 640px)',
+          aspectRatio: '4/3',
+          background: '#000',
+          padding: '4%',
+          boxSizing: 'border-box',
+          filter: `brightness(${settings.display.brightness})`,
+        }}
+      >
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.6fr 1fr', gridTemplateRows: 'auto 1fr auto', height: '100%', gap: '2%' }}>
+          {/* LEFT: AIR / OIL / P1 / P2 */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between', padding: '6% 0' }}>
+            <div style={pill('AIR', yellow, '#000')}>AIR</div>
+            <div style={pill('OIL', yellow, '#000')}>OIL</div>
+            <div style={pill('P1', orange, '#000')}>P1</div>
+            <div style={pill('P2', orange, '#000')}>P2</div>
+          </div>
+
+          {/* CENTER: modulator over cruise buttons */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3%' }}>
+            <div style={{ flex: 3, width: '62%', minHeight: 0 }}>
+              <VoiceModulator getLevels={getLevels} brightness={settings.display.brightness} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5%', width: '100%' }}>
+              <div style={pill('AUTO\nCRUISE', yellow, '#000', { minWidth: '84%' })}>{'AUTO\nCRUISE'}</div>
+              <div style={pill('NORMAL\nCRUISE', yellow, '#000', { minWidth: '84%' })}>{'NORMAL\nCRUISE'}</div>
+              <div style={pill('PURSUIT', red, '#200', { minWidth: '84%' })}>PURSUIT</div>
+            </div>
+          </div>
+
+          {/* RIGHT: S1 / S2 / P3 / P4 */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between', padding: '6% 0' }}>
+            <div style={pill('S1', yellow, '#000')}>S1</div>
+            <div style={pill('S2', yellow, '#000')}>S2</div>
+            <div style={pill('P3', orange, '#000')}>P3</div>
+            <div style={pill('P4', orange, '#000')}>P4</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Status + controls below the display (subtle, not part of the replica) */}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', margin: '12px 0 4px', flexWrap: 'wrap', justifyContent: 'center' }}>
+        <span style={{ color: STATUS_COLOR[status], fontFamily: 'monospace', letterSpacing: '0.15em', fontSize: 13 }}>
+          ● {STATUS_LABEL[status]}
+        </span>
+        {settings.llm.provider === 'demo' && (
+          <span style={{ color: '#888', fontSize: 11, border: '1px solid #444', padding: '2px 8px', borderRadius: 4 }}>
+            DEMO MODE — no cloud AI connected
+          </span>
+        )}
+        {latency && <span style={{ color: '#666', fontSize: 11 }}>first-audio: {latency}</span>}
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        {machine.state === 'DISCONNECTED' ? (
+          <button onClick={() => void startConversation()} className="kitt-btn">▶ START CONVERSATION</button>
+        ) : (
+          <button onClick={stopConversation} className="kitt-btn">■ END</button>
+        )}
+        {machine.state === 'SPEAKING' && (
+          <button onClick={interrupt} className="kitt-btn" aria-label="Interrupt KITT">✖ INTERRUPT</button>
+        )}
+        <button onClick={() => setShowSettings(true)} className="kitt-btn" aria-label="Open settings">⚙ SETTINGS</button>
+      </div>
+
+      {/* Optional text input (secondary interface) */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const input = (e.currentTarget.elements.namedItem('msg') as HTMLInputElement);
+          if (input.value.trim()) {
+            void sendText(input.value);
+            input.value = '';
+          }
+        }}
+        style={{ display: 'flex', gap: 6, width: 'min(92vw, 480px)' }}
+      >
+        <input name="msg" placeholder="Type instead (optional)…" aria-label="Message KITT by text"
+          style={{ flex: 1, background: '#0a0a0a', border: '1px solid #333', color: '#ccc', padding: '8px 10px', borderRadius: 4 }} />
+        <button type="submit" className="kitt-btn">SEND</button>
+      </form>
+
+      {error && (
+        <div role="alert" style={{ color: '#ff5b5b', fontSize: 13, margin: 8, maxWidth: '90vw', textAlign: 'center' }}>
+          {error}{' '}
+          <button className="kitt-btn" onClick={() => { setError(null); void startConversation(); }}>RETRY</button>
+          <button className="kitt-btn" onClick={() => setError(null)}>DISMISS</button>
+        </div>
+      )}
+
+      {/* Input level meter (mic diagnostics; not part of the replica) */}
+      {machine.state === 'LISTENING' && (
+        <div aria-hidden style={{ width: 'min(92vw, 320px)', height: 4, background: '#111', borderRadius: 2, marginTop: 4 }}>
+          <div style={{ width: `${Math.min(100, inputLevel * 100)}%`, height: '100%', background: '#ffd400', borderRadius: 2 }} />
+        </div>
+      )}
+
+      {settings.display.showTranscript && (
+        <div style={{ width: 'min(92vw, 640px)', maxHeight: 180, overflowY: 'auto', fontSize: 13, color: '#aaa', margin: '8px 0' }}>
+          {transcript.map((t, i) => (
+            <div key={i} style={{ color: t.role === 'user' ? '#8ab4f8' : '#ff6b6b' }}>
+              <b>{t.role === 'user' ? 'You' : 'KITT'}:</b> {t.text}
+            </div>
+          ))}
+          {interim && <div style={{ color: '#666' }}><b>KITT:</b> {interim}</div>}
+        </div>
+      )}
+
+      {showSettings && (
+        <SettingsPanel
+          settings={settings}
+          micList={micList}
+          onClose={async (next?: KITTSettings) => {
+            if (next) {
+              setSettings(next);
+              engineRef.current?.updateSettings(next);
+              await saveSettings(next);
+            }
+            setShowSettings(false);
+          }}
+          onDeleteSecrets={async () => {
+            await deleteSecrets();
+            setSettings((s) => ({ ...s, persistSecrets: false }));
+          }}
+        />
+      )}
+
+      <style jsx global>{`
+        .kitt-btn {
+          background: #151515;
+          border: 1px solid #3a3a3a;
+          color: #bbb;
+          padding: 6px 14px;
+          border-radius: 4px;
+          font-family: monospace;
+          letter-spacing: 0.08em;
+          cursor: pointer;
+          font-size: 12px;
+        }
+        .kitt-btn:hover { border-color: #ff1a1a; color: #ff5050; }
+        @media (max-width: 480px) {
+          .kitt-display { width: 96vw; }
+        }
+      `}</style>
+    </div>
+  );
+}

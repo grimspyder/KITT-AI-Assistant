@@ -1,0 +1,30 @@
+:root {
+  --kitt-led-on: #ff1a1a;
+  --kitt-led-off: #5c0808;
+  --kitt-font: 'Arial Narrow', Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  background: #000;
+  color: #ccc;
+  font-family: Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
