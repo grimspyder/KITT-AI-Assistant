@@ -204,11 +204,21 @@ export class AudioPipeline {
     }
     // Wait for element to finish
     await new Promise<void>((resolve) => {
-      const finish = () => resolve();
+      let settled = false;
+      const finish = () => {
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
+      };
       el.onended = finish;
       el.onerror = finish;
-      // safety: if play never started (empty stream), resolve quickly
-      setTimeout(() => resolve(), 60000);
+      // If playback never starts (autoplay policy / suspended context), el.play()
+      // rejects — resolve shortly after so the caller isn't stuck for the full
+      // duration. Real playback in an unlocked browser ends via onended.
+      void el.play().catch(() => setTimeout(finish, 500));
+      // absolute safety
+      setTimeout(finish, 120000);
     });
     if (this.analyser && this.gain) {
       try {

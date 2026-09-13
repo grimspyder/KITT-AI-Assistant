@@ -64,6 +64,8 @@ export default function KittDashboard() {
   }, [settings.display.smoothing]);
 
   const getLevels = useCallback((): BarLevels | null => {
+    // Synthetic LED test overrides audio analysis
+    if (ledTestRef.current) return levelsRef.current;
     const engine = engineRef.current;
     if (!engine || !engine.isActive()) return null;
     const now = performance.now();
@@ -126,6 +128,39 @@ export default function KittDashboard() {
 
   const interrupt = useCallback(() => {
     engineRef.current?.interrupt();
+  }, []);
+
+  // Synthetic LED test mode: drives the modulator without any audio (spec §14).
+  const ledTestRef = useRef<{ raf: number; until: number } | null>(null);
+  const toggleLedTest = useCallback(() => {
+    if (ledTestRef.current) {
+      cancelAnimationFrame(ledTestRef.current.raf);
+      ledTestRef.current = null;
+      levelsRef.current = { left: 0, center: 0, right: 0 };
+      return;
+    }
+    const start = performance.now();
+    const tick = () => {
+      const ref = ledTestRef.current;
+      if (!ref) return;
+      const t = (performance.now() - start) / 1000;
+      const until = ref.until;
+      // envelope: ramp up, wobble, ramp down, repeat — speech-like
+      const phase = (t % 2) / 2;
+      const env = Math.max(0, Math.sin(Math.PI * phase) * (0.55 + 0.45 * Math.sin(t * 7)));
+      levelsRef.current = {
+        left: env * 0.8,
+        center: Math.min(1, env * 1.1),
+        right: env * 0.6,
+      };
+      if (performance.now() < until) ref.raf = requestAnimationFrame(tick);
+      else {
+        levelsRef.current = { left: 0, center: 0, right: 0 };
+        ledTestRef.current = null;
+      }
+    };
+    ledTestRef.current = { raf: 0, until: start + 8000 };
+    ledTestRef.current.raf = requestAnimationFrame(tick);
   }, []);
 
   const sendText = useCallback(async (text: string) => {
@@ -259,6 +294,7 @@ export default function KittDashboard() {
         {machine.state === 'SPEAKING' && (
           <button onClick={interrupt} className="kitt-btn" aria-label="Interrupt KITT">✖ INTERRUPT</button>
         )}
+        <button onClick={toggleLedTest} className="kitt-btn" aria-label="Test the LED modulator">◉ TEST LEDS</button>
         <button onClick={() => setShowSettings(true)} className="kitt-btn" aria-label="Open settings">⚙ SETTINGS</button>
       </div>
 
