@@ -163,6 +163,14 @@ export default function KittDashboard() {
     ledTestRef.current.raf = requestAnimationFrame(tick);
   }, []);
 
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+    } else {
+      void document.documentElement.requestFullscreen().catch(() => undefined);
+    }
+  }, []);
+
   const sendText = useCallback(async (text: string) => {
     const engine = engineRef.current;
     if (engine) {
@@ -295,6 +303,7 @@ export default function KittDashboard() {
           <button onClick={interrupt} className="kitt-btn" aria-label="Interrupt KITT">✖ INTERRUPT</button>
         )}
         <button onClick={toggleLedTest} className="kitt-btn" aria-label="Test the LED modulator">◉ TEST LEDS</button>
+        <button onClick={toggleFullscreen} className="kitt-btn" aria-label="Toggle full screen">⛶ FULLSCREEN</button>
         <button onClick={() => setShowSettings(true)} className="kitt-btn" aria-label="Open settings">⚙ SETTINGS</button>
       </div>
 
