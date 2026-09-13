@@ -9,6 +9,8 @@ import { LLMConfig } from '@/lib/config/settings';
 
 export const runtime = 'nodejs';
 
+const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
+
 interface Body {
   provider: string;
   apiKey: string;
@@ -24,6 +26,7 @@ function pick(provider: string) {
   switch (provider) {
     case 'openai':
     case 'openai-compatible':
+    case 'openrouter':
       return openaiProvider;
     case 'anthropic':
       return anthropicProvider;
@@ -48,7 +51,7 @@ export async function POST(req: NextRequest) {
   const impl = pick(provider);
   if (!impl) return NextResponse.json({ error: `Unknown provider: ${provider}` }, { status: 400 });
   if (!apiKey) return NextResponse.json({ error: 'No API key configured.' }, { status: 401 });
-  const cfg = { apiKey, model, temperature, maxTokens, baseUrl, provider: provider as LLMConfig['provider'] };
+  const cfg = { apiKey, model, temperature, maxTokens, baseUrl: provider === 'openrouter' ? OPENROUTER_BASE : baseUrl, provider: provider as LLMConfig['provider'] };
   const chatMessages = messages as { role: 'system' | 'user' | 'assistant'; content: string }[];
 
   const upstream = new AbortController();

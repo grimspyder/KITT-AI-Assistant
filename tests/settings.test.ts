@@ -27,14 +27,19 @@ describe('settings', () => {
       key: (i: number) => Object.keys(store)[i] ?? null,
       length: 0,
     };
-    g.crypto = {
-      getRandomValues: (b: Uint8Array) => { for (let i = 0; i < b.length; i++) b[i] = i % 256; return b; },
-    } as unknown as Crypto;
-    g.crypto.subtle = {
-      importKey: async () => ({}),
-      encrypt: async () => new ArrayBuffer(32),
-      decrypt: async () => new TextEncoder().encode(JSON.stringify({ llm: 'sk-test' })).buffer as ArrayBuffer,
-    } as unknown as SubtleCrypto;
+    // jsdom exposes read-only crypto: patch its methods instead of replacing the object
+    Object.defineProperty(g.crypto, 'getRandomValues', {
+      value: (b: Uint8Array) => { for (let i = 0; i < b.length; i++) b[i] = i % 256; return b; },
+      configurable: true,
+    });
+    Object.defineProperty(g.crypto, 'subtle', {
+      value: {
+        importKey: async () => ({}),
+        encrypt: async () => new ArrayBuffer(32),
+        decrypt: async () => new TextEncoder().encode(JSON.stringify({ llm: 'sk-test' })).buffer as ArrayBuffer,
+      },
+      configurable: true,
+    });
     const { saveSettings, loadSettings } = await import('@/lib/config/storage');
     const { DEFAULT_SETTINGS } = await import('@/lib/config/settings');
     const s = { ...DEFAULT_SETTINGS, userName: 'Felix', llm: { ...DEFAULT_SETTINGS.llm, apiKey: 'sk-secret', provider: 'openai' as const } };

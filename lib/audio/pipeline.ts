@@ -32,7 +32,13 @@ export class AudioPipeline {
       this.freqBuf = new Uint8Array(this.analyser.frequencyBinCount);
       this.timeBuf = new Float32Array(this.analyser.fftSize);
     }
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
+    if (this.ctx.state === 'suspended') {
+      // Autoplay policy: resume is best-effort. A user gesture (button click) normally
+      // unlocks it; if the promise never resolves the synth still schedules and will
+      // play when the context eventually runs. Never block the pipeline on it.
+      void this.ctx.resume().catch(() => undefined);
+      setTimeout(() => { void this.ctx?.resume().catch(() => undefined); }, 300);
+    }
     return this.ctx;
   }
 

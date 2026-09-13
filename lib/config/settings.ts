@@ -1,6 +1,6 @@
 // Core domain types and constants
 
-export type ProviderId = 'openai' | 'anthropic' | 'gemini' | 'openai-compatible' | 'demo';
+export type ProviderId = 'openai' | 'anthropic' | 'gemini' | 'openai-compatible' | 'openrouter' | 'demo';
 
 export interface LLMConfig {
   provider: ProviderId;

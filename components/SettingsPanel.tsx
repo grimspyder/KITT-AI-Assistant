@@ -73,12 +73,16 @@ export default function SettingsPanel({ settings, micList, onClose, onDeleteSecr
               <option value="anthropic">Anthropic</option>
               <option value="gemini">Google Gemini</option>
               <option value="openai-compatible">OpenAI-compatible endpoint</option>
+              <option value="openrouter">OpenRouter</option>
             </select>
             {s.llm.provider === 'openai-compatible' && (
               <>
                 <label style={label}>Base URL</label>
                 <input style={input} value={s.llm.baseUrl ?? ''} onChange={(e) => upd({ llm: { ...s.llm, baseUrl: e.target.value } })} placeholder="https://host/v1" />
               </>
+            )}
+            {s.llm.provider === 'openrouter' && (
+              <p style={{ fontSize: 11, color: '#666' }}>Models use vendor/name form, e.g. openai/gpt-4o-mini, anthropic/claude-3.5-sonnet.</p>
             )}
             <label style={label}>Model</label>
             <input style={input} value={s.llm.model} onChange={(e) => upd({ llm: { ...s.llm, model: e.target.value } })} />

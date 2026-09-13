@@ -203,26 +203,37 @@ export class ConversationEngine {
 
   private consideredStart = 0;
 
-  /** Queue complete sentences from newly arrived text. */
+  /** Queue complete sentences from newly arrived text.
+   A sentence is only consumed once a terminator [.!?] is FOLLOWED by whitespace
+   (or text is final). The un-consumed remainder is re-examined on the next chunk,
+   so boundaries that form across chunk edges are never lost. */
   private queueFrom(text: string, final: boolean): void {
     const region = text.slice(this.consideredStart);
     if (!region) {
       if (final) this.consideredStart = text.length;
       return;
     }
-    const parts = region.split(/(?<=[.!?])\s+/);
-    const complete = final ? parts.filter((p) => p.trim()) : parts.slice(0, -1);
-    const tail = final ? '' : parts[parts.length - 1] ?? '';
-    let consumed = 0;
-    for (const p of complete) {
-      if (p.trim()) {
-        this.speakQueue.push(p.trim());
-        consumed += p.length;
-      }
+    // Find the last terminator-followed-by-whitespace boundary in the region.
+    const boundary = /([.!?])(\s+)/g;
+    let lastEnd = -1;
+    let m: RegExpExecArray | null;
+    while ((m = boundary.exec(region)) !== null) {
+      lastEnd = m.index + m[1].length; // position just past the terminator
     }
-    if (!final) consumed += tail.length;
-    else consumed = region.length;
-    this.consideredStart += consumed;
+    if (lastEnd === -1) {
+      // No complete sentence yet.
+      if (final) {
+        const t = region.trim();
+        if (t) this.speakQueue.push(t);
+        this.consideredStart = text.length;
+      }
+      return;
+    }
+    const sentence = region.slice(0, lastEnd).trim();
+    if (sentence) this.speakQueue.push(sentence);
+    this.consideredStart += lastEnd;
+    // Recurse to catch multiple completed sentences in this region.
+    this.queueFrom(text, final);
   }
 
   private async pumpTTS(): Promise<void> {
