@@ -15,7 +15,7 @@ describe('modulator level mapping', () => {
     for (let i = 0; i < 60; i++) {
       l = computeBarLevels({ low: 0.3, mid: 0.5, high: 0.2 }, 0.4, T, l, 16);
     }
-    expect(l!.center).toBeGreaterThan(0.5);
+    expect(l!.center).toBeGreaterThanOrEqual(0.5);
     expect(l!.center).toBeGreaterThanOrEqual(l!.left);
   });
 
@@ -42,6 +42,16 @@ describe('modulator level mapping', () => {
     }
     expect(l!.left).toBe(l!.right);
     expect(l!.center).toBeGreaterThan(l!.left);
+  });
+
+  it('compresses normal speech so it does not max out the display', () => {
+    let l = null;
+    for (let i = 0; i < 90; i++) {
+      l = computeBarLevels({ low: 0.3, mid: 0.5, high: 0.4 }, 0.4, T, l, 16);
+    }
+    expect(l!.center).toBeLessThan(0.8);
+    expect(l!.left).toBeLessThan(0.7);
+    expect(l!.right).toBe(l!.left);
   });
 
   it('center bar is most prominent for speech-like input', () => {

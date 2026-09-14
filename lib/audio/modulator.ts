@@ -50,11 +50,16 @@ export function computeBarLevels(
   // Frequency analysis is intentionally used only to stabilize the shared
   // voice envelope; it must never make left and right diverge.
   const bandEnergy = (bands.low + bands.mid + bands.high) / 3;
-  const envelope = clamp01((Math.max(rms, bandEnergy * 0.65) * g - floor) * 1.35);
-  const outer = clamp01(envelope * 0.78);
+  const rawEnergy = Math.max(rms, bandEnergy * 0.65);
+  // This is a speech-presence display, not a volume meter. Compress loud
+  // input and reserve the outermost segments for exceptional peaks so normal
+  // speech produces readable, animated mid-height bursts.
+  const compressed = Math.tanh(Math.max(0, rawEnergy * g - floor) * 1.4);
+  const envelope = clamp01(compressed * 0.62);
+  const outer = clamp01(envelope * 0.68);
   const targets = {
     left: outer,
-    center: clamp01(envelope * 1.12),
+    center: clamp01(envelope * 0.9),
     right: outer,
   };
   if (silent) {
