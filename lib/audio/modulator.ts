@@ -45,13 +45,17 @@ export function computeBarLevels(
   const g = tuning.gain;
   const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
-  // The real display follows the speech envelope first. Frequency bands only
-  // shape the quieter outer bars; they must not overpower the center bar.
-  const envelope = clamp01((rms * g - floor) * 1.35);
+  // KITT's two outer columns are mirrored: both show the same level.
+  // The center column follows the same speech envelope with a modest boost.
+  // Frequency analysis is intentionally used only to stabilize the shared
+  // voice envelope; it must never make left and right diverge.
+  const bandEnergy = (bands.low + bands.mid + bands.high) / 3;
+  const envelope = clamp01((Math.max(rms, bandEnergy * 0.65) * g - floor) * 1.35);
+  const outer = clamp01(envelope * 0.78);
   const targets = {
-    left: clamp01(envelope * 0.62 + Math.max(0, bands.low - floor) * g * 0.35),
-    center: clamp01(envelope * 1.08 + Math.max(0, bands.mid - floor) * g * 0.25),
-    right: clamp01(envelope * 0.52 + Math.max(0, bands.high - floor) * g * 0.30),
+    left: outer,
+    center: clamp01(envelope * 1.12),
+    right: outer,
   };
   if (silent) {
     targets.left = 0;

@@ -34,6 +34,16 @@ describe('modulator level mapping', () => {
     expect(a.center).toBeLessThan(b.center);
   });
 
+  it('mirrors the outer bars and boosts the center bar', () => {
+    let l = null;
+    for (let i = 0; i < 90; i++) {
+      // Deliberately asymmetric spectrum: outer columns must still match.
+      l = computeBarLevels({ low: 0.05, mid: 0.5, high: 0.9 }, 0.45, T, l, 16);
+    }
+    expect(l!.left).toBe(l!.right);
+    expect(l!.center).toBeGreaterThan(l!.left);
+  });
+
   it('center bar is most prominent for speech-like input', () => {
     let l = null;
     for (let i = 0; i < 90; i++) {
