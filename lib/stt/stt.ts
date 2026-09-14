@@ -42,11 +42,19 @@ export class BrowserRecognition {
     rec.onresult = (e: any) => {
       let text = '';
       let isFinal = false;
+      let confidence = 0;
+      let confidenceCount = 0;
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        text += e.results[i][0].transcript;
+        const alternative = e.results[i][0];
+        text += alternative.transcript;
+        confidence += typeof alternative.confidence === 'number' ? alternative.confidence : 1;
+        confidenceCount += 1;
         if (e.results[i].isFinal) isFinal = true;
       }
-      if (text) h.onResult(text, isFinal);
+      const averageConfidence = confidenceCount ? confidence / confidenceCount : 0;
+      // Interim text remains useful for captions, but low-confidence final
+      // results are usually environmental noise or an accidental activation.
+      if (text && (!isFinal || averageConfidence >= 0.45)) h.onResult(text, isFinal);
     };
     rec.onerror = (e: any) => {
       const code = String(e.error || 'unknown');

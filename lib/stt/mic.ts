@@ -23,8 +23,11 @@ export interface MicOptions {
 
 export class MicCapture {
   private stream: MediaStream | null = null;
+  private recordingStream: MediaStream | null = null;
   private ctx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
+  private filter: BiquadFilterNode | null = null;
+  private freq: Uint8Array = new Uint8Array(0);
   private buf: Float32Array = new Float32Array(0);
   private raf: number | null = null;
   private recorder: MediaRecorder | null = null;
@@ -60,10 +63,25 @@ export class MicCapture {
     }
     const Ctor: typeof AudioContext = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     this.ctx = new Ctor();
+    // Voice-focused monitoring path: remove rumble and very high-frequency
+    // environmental noise before VAD. MediaRecorder still receives the raw
+    // selected microphone stream for transcription compatibility.
+    this.filter = this.ctx.createBiquadFilter();
+    this.filter.type = 'bandpass';
+    this.filter.frequency.value = 1450;
+    this.filter.Q.value = 0.65;
     this.analyser = this.ctx.createAnalyser();
     this.analyser.fftSize = 1024;
+    this.freq = new Uint8Array(this.analyser.frequencyBinCount);
     this.buf = new Float32Array(this.analyser.fftSize);
-    this.ctx.createMediaStreamSource(this.stream).connect(this.analyser);
+    const source = this.ctx.createMediaStreamSource(this.stream);
+    const destination = this.ctx.createMediaStreamDestination();
+    source.connect(this.filter).connect(this.analyser);
+    // Record the filtered stream for Whisper so steady environmental noise is
+    // reduced before transcription, while the original stream remains available
+    // for browser speech recognition's own capture path.
+    this.filter.connect(destination);
+    this.recordingStream = destination.stream;
     this.active = true;
     this.loop();
   }
@@ -72,9 +90,10 @@ export class MicCapture {
   startRecording(): void {
     if (!this.stream || this.recorder) return;
     this.chunks = [];
+    const captureStream = this.recordingStream ?? this.stream;
     try {
       const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
-      this.recorder = new MediaRecorder(this.stream, mime ? { mimeType: mime } : undefined);
+      this.recorder = new MediaRecorder(captureStream, mime ? { mimeType: mime } : undefined);
     } catch {
       this.handlers.onError?.('Audio recording unsupported in this browser.');
       return;
@@ -113,9 +132,23 @@ export class MicCapture {
       this.adaptiveThreshold = Math.max(0.008, noise * 3);
     }
 
+    // Require both sufficient energy and a voice-band spectral centroid.
+    // Steady broadband/low-frequency noise can exceed RMS alone; speech has
+    // sustained energy in the 300–3400 Hz region after the bandpass filter.
+    this.analyser.getByteFrequencyData(this.freq as unknown as Uint8Array<ArrayBuffer>);
+    let bandSum = 0;
+    let bandPeak = 0;
+    for (let i = 0; i < this.freq.length; i++) {
+      const hz = (i * this.ctx.sampleRate) / (this.analyser.fftSize);
+      if (hz >= 300 && hz <= 3400) {
+        bandSum += this.freq[i];
+        bandPeak = Math.max(bandPeak, this.freq[i]);
+      }
+    }
+    const voiceBand = bandSum / Math.max(1, this.freq.length * 255);
     const th = this.adaptiveThreshold;
     const now = performance.now();
-    const voiced = rms > th;
+    const voiced = rms > th && voiceBand > 0.018 && bandPeak > 10;
 
     if (voiced && !this.speaking) {
       this.speaking = true;
@@ -149,11 +182,15 @@ export class MicCapture {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = null;
     this.stopRecording();
+    this.recordingStream?.getTracks().forEach((t) => t.stop());
+    this.recordingStream = null;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
     void this.ctx?.close();
     this.ctx = null;
     this.analyser = null;
+    this.filter = null;
+    this.freq = new Uint8Array(0);
   }
 }
 
