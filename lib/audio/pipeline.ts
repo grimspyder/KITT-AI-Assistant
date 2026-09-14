@@ -164,6 +164,17 @@ export class AudioPipeline {
       ms.addEventListener('sourceopen', () => resolve(), { once: true });
     });
     const sb = ms.addSourceBuffer(mime);
+    // Connect the media element to the analyser BEFORE playback starts.
+    // Connecting after el.onended meant the analyser saw silence for the
+    // entire response, so the KITT bars never moved with ElevenLabs audio.
+    try {
+      const src = this.ctx!.createMediaElementSource(el);
+      src.connect(this.analyser!);
+      this.currentSource = src;
+      this.setVolume(volume);
+    } catch {
+      /* source may already be connected by a browser implementation */
+    }
     const reader = stream.getReader();
     let first = true;
     const appendChunk = (chunk: Uint8Array): Promise<void> =>
@@ -220,16 +231,6 @@ export class AudioPipeline {
       // absolute safety
       setTimeout(finish, 120000);
     });
-    if (this.analyser && this.gain) {
-      try {
-        const src = this.ctx!.createMediaElementSource(el);
-        src.connect(this.analyser);
-        this.currentSource = src;
-        this.setVolume(volume);
-      } catch {
-        /* element source already created */
-      }
-    }
   }
 
   close(): void {
