@@ -44,6 +44,7 @@ export class ConversationEngine {
   private started = false;
   private micLevelCb: ((level: number) => void) | null = null;
   private permissionStream: MediaStream | null = null;
+  private suppressRecognitionRestart = false;
 
   constructor(settings: KITTSettings) {
     this.settings = settings;
@@ -86,7 +87,8 @@ export class ConversationEngine {
 
   /** Begin listening for the next user utterance. */
   async listen(): Promise<void> {
-    if (!this.started || this.speakQueue.length > 0 || this.ttsBusy) return;
+    // Never acquire/listen while an LLM turn or TTS response is active.
+    if (!this.started || this.suppressRecognitionRestart || this.machine.state === 'PROCESSING' || this.machine.state === 'SPEAKING' || this.speakQueue.length > 0 || this.ttsBusy) return;
     this.dispatch({ type: 'START_LISTENING' });
     if (this.settings.stt.provider === 'browser') {
       if (!this.browserRec.supported) {
@@ -113,16 +115,20 @@ export class ConversationEngine {
       }
       this.browserRec.start({
         onResult: (text, isFinal) => {
+          // Ignore callbacks from a recognizer that ended as the turn began.
+          if (this.machine.state !== 'LISTENING' || this.suppressRecognitionRestart) return;
           this.handlers.onTranscript?.('user', text, !isFinal);
           if (isFinal && text.trim()) {
+            this.suppressRecognitionRestart = true;
             void this.handleUtterance(text.trim());
           }
         },
         onError: (m) => this.err(m),
         onEnd: () => {
+          if (this.suppressRecognitionRestart) return;
           if (this.machine.state === 'LISTENING' && !this.ttsBusy) {
             this.dispatch({ type: 'STOP_LISTENING' });
-            // auto-restart listening for continuous conversation
+            // auto-restart only after a genuine idle recognition end
             setTimeout(() => void this.listen(), 250);
           }
         },
@@ -167,6 +173,7 @@ export class ConversationEngine {
   /** Handle a completed user utterance. */
   async handleUtterance(text: string): Promise<void> {
     if (!text.trim() || !this.started) return;
+    this.suppressRecognitionRestart = true;
     this.browserRec.stop();
     this.pipeline.stop(); // in case anything is playing
     this.speakQueue = [];
@@ -286,6 +293,7 @@ export class ConversationEngine {
     this.ttsBusy = false;
     if (this.llmDone && this.speakQueue.length === 0 && this.machine.state === 'SPEAKING') {
       this.dispatch({ type: 'PLAYBACK_ENDED' });
+      this.suppressRecognitionRestart = false;
       void this.listen();
     }
   }
@@ -295,6 +303,7 @@ export class ConversationEngine {
   }
 
   interrupt(): void {
+    this.suppressRecognitionRestart = true;
     this.abort?.abort();
     this.pipeline.stop();
     this.browserRec.stop();
@@ -303,6 +312,7 @@ export class ConversationEngine {
     this.llmDone = true;
     this.mic.bargeInArmed = false;
     this.dispatch({ type: 'INTERRUPTION_DETECTED' });
+    this.suppressRecognitionRestart = false;
     setTimeout(() => void this.listen(), 300);
   }
 
