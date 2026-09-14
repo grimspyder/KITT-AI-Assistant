@@ -11,6 +11,7 @@ import { maskKey } from '@/lib/config/storage';
 interface Props {
   settings: KITTSettings;
   micList: MediaDeviceInfo[];
+  onRefreshMics: () => Promise<void>;
   onClose: (next?: KITTSettings) => void;
   onDeleteSecrets: () => void;
 }
@@ -18,7 +19,7 @@ interface Props {
 type Section = 'AI BRAIN' | 'VOICE' | 'SPEECH' | 'AUDIO' | 'PERSONALITY' | 'CONVERSATION' | 'DISPLAY' | 'PRIVACY' | 'ADVANCED';
 const SECTIONS: Section[] = ['AI BRAIN', 'VOICE', 'SPEECH', 'AUDIO', 'PERSONALITY', 'CONVERSATION', 'DISPLAY', 'PRIVACY', 'ADVANCED'];
 
-export default function SettingsPanel({ settings, micList, onClose, onDeleteSecrets }: Props) {
+export default function SettingsPanel({ settings, micList, onRefreshMics, onClose, onDeleteSecrets }: Props) {
   const [s, setS] = useState<KITTSettings>({ ...settings });
   const [section, setSection] = useState<Section>('AI BRAIN');
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -168,12 +169,19 @@ export default function SettingsPanel({ settings, micList, onClose, onDeleteSecr
         {section === 'AUDIO' && (
           <div>
             <label style={label}>Microphone</label>
-            <select style={input} onChange={() => undefined} value="">
-              <option value="">System default</option>
+            <select
+              style={input}
+              value={s.mic.deviceId ?? ''}
+              onChange={(e) => upd({ mic: { ...s.mic, deviceId: e.target.value || undefined } })}
+              aria-label="Microphone input device"
+            >
+              <option value="">System default microphone</option>
               {micList.map((m, i) => (
                 <option key={m.deviceId} value={m.deviceId}>{m.label || `Microphone ${i + 1}`}</option>
               ))}
             </select>
+            <button className="kitt-btn" onClick={() => void onRefreshMics()} style={{ marginTop: 8 }}>REFRESH MICROPHONES</button>
+            {micList.length === 0 && <p style={{ fontSize: 11, color: '#ff9a3c' }}>No microphones are currently visible. Click START CONVERSATION once to grant permission, then return here and refresh.</p>}
             <p style={{ fontSize: 11, color: '#666' }}>Output device follows the OS default (browser limitation).</p>
           </div>
         )}

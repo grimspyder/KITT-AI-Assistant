@@ -57,6 +57,11 @@ export default function KittDashboard() {
     void listMics().then(setMicList);
   }, []);
 
+  const refreshMics = useCallback(async () => {
+    // enumerateDevices exposes useful labels after getUserMedia permission.
+    setMicList(await listMics());
+  }, []);
+
   useEffect(() => {
     tuningRef.current.smoothing = settings.display.smoothing;
     tuningRef.current.releaseMs = 70 + settings.display.smoothing * 90;
@@ -116,8 +121,9 @@ export default function KittDashboard() {
         }
       },
       onError: (msg) => setError(msg),
-    });
-  }, [settings, handleTranscript]);
+      onMicrophoneReady: () => { void refreshMics(); },
+      });
+  }, [settings, handleTranscript, refreshMics]);
 
   const stopConversation = useCallback(() => {
     engineRef.current?.stop();
@@ -354,6 +360,7 @@ export default function KittDashboard() {
         <SettingsPanel
           settings={settings}
           micList={micList}
+          onRefreshMics={refreshMics}
           onClose={async (next?: KITTSettings) => {
             if (next) {
               setSettings(next);

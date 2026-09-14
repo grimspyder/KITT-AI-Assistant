@@ -23,6 +23,7 @@ export interface ConversationHandlers {
   onTranscript?: (role: 'user' | 'assistant', text: string, interim?: boolean) => void;
   onLatency?: (t: LatencyTrace) => void;
   onError?: (message: string) => void;
+  onMicrophoneReady?: () => void;
 }
 
 export class ConversationEngine {
@@ -91,6 +92,24 @@ export class ConversationEngine {
         this.err('This browser does not support speech recognition. Use Chrome or Edge, or configure Whisper in Settings.');
         return;
       }
+      try {
+        // Explicitly request permission before Web Speech API. This makes the
+        // browser prompt appear from the user's START click instead of silently
+        // failing inside speech recognition.
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: this.settings.mic.deviceId ? { exact: this.settings.mic.deviceId } : undefined, echoCancellation: this.settings.mic.echoCancellation, noiseSuppression: this.settings.mic.noiseSuppression, autoGainControl: this.settings.mic.autoGainControl } });
+        stream.getTracks().forEach((track) => track.stop());
+        this.handlers.onMicrophoneReady?.();
+      } catch (e) {
+        const name = e instanceof DOMException ? e.name : '';
+        if (name === 'NotFoundError') {
+          this.err('No microphone found. Connect a microphone and choose it in Settings → AUDIO.');
+        } else if (name === 'NotAllowedError' || name === 'SecurityError') {
+          this.err('Microphone permission was blocked. Click the lock icon beside the address, set Microphone to Allow, then reload.');
+        } else {
+          this.err('Microphone could not be opened: ' + (e instanceof Error ? e.message : String(e)));
+        }
+        return;
+      }
       this.browserRec.start({
         onResult: (text, isFinal) => {
           this.handlers.onTranscript?.('user', text, !isFinal);
@@ -117,6 +136,7 @@ export class ConversationEngine {
             onError: (m) => this.err(m),
           },
           {
+            deviceId: this.settings.mic.deviceId,
             echoCancellation: this.settings.mic.echoCancellation,
             noiseSuppression: this.settings.mic.noiseSuppression,
             autoGainControl: this.settings.mic.autoGainControl,
