@@ -7,6 +7,7 @@ import { llmClient } from '@/lib/llm/client';
 import { TTSClient } from '@/lib/tts/client';
 import { AudioPipeline } from '@/lib/audio/pipeline';
 import { maskKey } from '@/lib/config/storage';
+import { testMicrophone } from '@/lib/stt/micTest';
 
 interface Props {
   settings: KITTSettings;
@@ -24,6 +25,8 @@ export default function SettingsPanel({ settings, micList, onRefreshMics, onClos
   const [section, setSection] = useState<Section>('AI BRAIN');
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [testing, setTesting] = useState(false);
+  const [micTesting, setMicTesting] = useState(false);
+  const [micTestMsg, setMicTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const upd = (patch: Partial<KITTSettings>) => setS((prev) => ({ ...prev, ...patch }));
 
@@ -36,6 +39,14 @@ export default function SettingsPanel({ settings, micList, onRefreshMics, onClos
     const r = await llmClient.testConnection({ provider: s.llm.provider, apiKey: s.llm.apiKey, model: s.llm.model, baseUrl: s.llm.baseUrl || undefined });
     setTestMsg({ ok: r.ok, text: r.message });
     setTesting(false);
+  };
+
+  const runMicTest = async () => {
+    setMicTesting(true);
+    setMicTestMsg(null);
+    const r = await testMicrophone(s.mic.deviceId);
+    setMicTestMsg({ ok: r.ok, text: r.message });
+    setMicTesting(false);
   };
 
   const runTestVoice = async () => {
@@ -169,6 +180,7 @@ export default function SettingsPanel({ settings, micList, onRefreshMics, onClos
         {section === 'AUDIO' && (
           <div>
             <label style={label}>Microphone</label>
+            <p style={{ fontSize: 11, color: '#999', margin: '8px 0 4px' }}>The selected device is used by microphone capture and Whisper. Browser speech recognition may still use the browser&apos;s default input because the Web Speech API does not expose a device selector.</p>
             <select
               style={input}
               value={s.mic.deviceId ?? ''}
@@ -180,8 +192,12 @@ export default function SettingsPanel({ settings, micList, onRefreshMics, onClos
                 <option key={m.deviceId} value={m.deviceId}>{m.label || `Microphone ${i + 1}`}</option>
               ))}
             </select>
-            <button className="kitt-btn" onClick={() => void onRefreshMics()} style={{ marginTop: 8 }}>REFRESH MICROPHONES</button>
-            {micList.length === 0 && <p style={{ fontSize: 11, color: '#ff9a3c' }}>No microphones are currently visible. Click START CONVERSATION once to grant permission, then return here and refresh.</p>}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+              <button className="kitt-btn" onClick={() => void onRefreshMics()}>REFRESH MICROPHONES</button>
+              <button className="kitt-btn" disabled={micTesting} onClick={() => void runMicTest()}>{micTesting ? 'TESTING…' : 'TEST MICROPHONE'}</button>
+            </div>
+            {micTestMsg && <p role="status" style={{ fontSize: 12, color: micTestMsg.ok ? '#7bd87b' : '#ff6b6b', marginTop: 8 }}>{micTestMsg.ok ? '✔ ' : '✖ '}{micTestMsg.text}</p>}
+            {micList.length === 0 && <p style={{ fontSize: 11, color: '#ff9a3c' }}>No microphones are currently visible. Click TEST MICROPHONE to request permission, then refresh the list.</p>}
             <p style={{ fontSize: 11, color: '#666' }}>Output device follows the OS default (browser limitation).</p>
           </div>
         )}

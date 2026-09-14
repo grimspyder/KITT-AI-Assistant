@@ -43,6 +43,7 @@ export class ConversationEngine {
   private llmDone = false;
   private started = false;
   private micLevelCb: ((level: number) => void) | null = null;
+  private permissionStream: MediaStream | null = null;
 
   constructor(settings: KITTSettings) {
     this.settings = settings;
@@ -89,15 +90,15 @@ export class ConversationEngine {
     this.dispatch({ type: 'START_LISTENING' });
     if (this.settings.stt.provider === 'browser') {
       if (!this.browserRec.supported) {
-        this.err('This browser does not support speech recognition. Use Chrome or Edge, or configure Whisper in Settings.');
+        this.err('This browser does not support speech recognition. Use Chrome or Edge, or switch Settings → SPEECH to OpenAI Whisper.');
         return;
       }
       try {
         // Explicitly request permission before Web Speech API. This makes the
         // browser prompt appear from the user's START click instead of silently
         // failing inside speech recognition.
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: this.settings.mic.deviceId ? { exact: this.settings.mic.deviceId } : undefined, echoCancellation: this.settings.mic.echoCancellation, noiseSuppression: this.settings.mic.noiseSuppression, autoGainControl: this.settings.mic.autoGainControl } });
-        stream.getTracks().forEach((track) => track.stop());
+        this.permissionStream?.getTracks().forEach((track) => track.stop());
+        this.permissionStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: this.settings.mic.deviceId ? { exact: this.settings.mic.deviceId } : undefined, echoCancellation: this.settings.mic.echoCancellation, noiseSuppression: this.settings.mic.noiseSuppression, autoGainControl: this.settings.mic.autoGainControl } });
         this.handlers.onMicrophoneReady?.();
       } catch (e) {
         const name = e instanceof DOMException ? e.name : '';

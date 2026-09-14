@@ -49,8 +49,18 @@ export class BrowserRecognition {
       if (text) h.onResult(text, isFinal);
     };
     rec.onerror = (e: any) => {
-      if (e.error === 'not-allowed') h.onError?.('Microphone permission denied.');
-      else if (e.error !== 'aborted' && e.error !== 'no-speech') h.onError?.(`Speech recognition error: ${e.error}`);
+      const code = String(e.error || 'unknown');
+      if (code === 'not-allowed' || code === 'service-not-allowed') {
+        h.onError?.('Speech recognition was blocked. Allow Microphone for this site, then reload. If permission is already allowed, switch Settings → SPEECH to OpenAI Whisper.');
+      } else if (code === 'audio-capture') {
+        h.onError?.('Speech recognition cannot access the selected microphone. Choose another input in Settings → AUDIO and refresh microphones.');
+      } else if (code === 'network') {
+        h.onError?.('Browser speech recognition lost its network connection. Try again or use OpenAI Whisper in Settings → SPEECH.');
+      } else if (code === 'no-speech') {
+        h.onError?.('No speech detected. Check the microphone input meter and speak closer to the selected microphone.');
+      } else if (code !== 'aborted') {
+        h.onError?.(`Speech recognition error: ${code}`);
+      }
     };
     rec.onend = () => {
       this.running = false;
