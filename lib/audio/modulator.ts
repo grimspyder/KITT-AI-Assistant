@@ -18,12 +18,13 @@ export interface ModulatorTuning {
 }
 
 export const DEFAULT_TUNING: ModulatorTuning = {
-  attackMs: 25,
-  releaseMs: 110,
-  noiseFloor: 0.012,
-  minActivation: 0.08,
-  gain: 2.2,
-  smoothing: 0.35,
+  // Tuned for the short, discrete bursts of the physical KITT display.
+  attackMs: 18,
+  releaseMs: 88,
+  noiseFloor: 0.018,
+  minActivation: 0.045,
+  gain: 3.4,
+  smoothing: 0.12,
 };
 
 export const SEGMENTS = 16; // LED segments per bar (research: 16-segment bargraph)
@@ -44,11 +45,13 @@ export function computeBarLevels(
   const g = tuning.gain;
   const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
-  // target levels: mid band drives center (most prominent), side bars weighted
+  // The real display follows the speech envelope first. Frequency bands only
+  // shape the quieter outer bars; they must not overpower the center bar.
+  const envelope = clamp01((rms * g - floor) * 1.35);
   const targets = {
-    left: clamp01((bands.low * g - floor) * 1.35),
-    center: clamp01(Math.max(bands.mid * g, rms * g * 1.1) - floor),
-    right: clamp01((bands.high * g * 1.6 - floor) * 1.2),
+    left: clamp01(envelope * 0.62 + Math.max(0, bands.low - floor) * g * 0.35),
+    center: clamp01(envelope * 1.08 + Math.max(0, bands.mid - floor) * g * 0.25),
+    right: clamp01(envelope * 0.52 + Math.max(0, bands.high - floor) * g * 0.30),
   };
   if (silent) {
     targets.left = 0;
@@ -65,14 +68,16 @@ export function computeBarLevels(
 
   const smooth = (cur: number, target: number): number => {
     const tau = target > cur ? attack : release;
-    // exponential approach: moves `tau` fraction per... use per-ms coefficient
     const k = 1 - Math.exp(-dtMs / (tau * 1000 * 0.35));
     let v = cur + (target - cur) * k;
     if (tuning.smoothing > 0) {
       const s = 1 - tuning.smoothing * 0.7;
       v = v * s + target * (1 - s);
     }
-    return clamp01(v);
+    // Quantize only the rendered level, not the analyser input. This creates
+    // crisp hardware-like segment changes while preserving envelope timing.
+    const quantized = v < 1 / SEGMENTS ? v : Math.round(v * SEGMENTS) / SEGMENTS;
+    return clamp01(quantized);
   };
 
   const prevL = prev ?? { left: 0, center: 0, right: 0 };

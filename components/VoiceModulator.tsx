@@ -57,12 +57,12 @@ export default function VoiceModulator({ getLevels, brightness = 1 }: Props) {
         const half = rows / 2;
         for (let i = 0; i < children.length; i++) {
           const rowIdx = i; // 0..rows-1 top to bottom
-          const dist = Math.abs(rowIdx - (rows - 1) / 2) / half; // 0 center..1 edge
-          // pairs: rows symmetric around center. level lights up to level*half distance
-          const lit = level * half >= dist - 0.001 && dist <= 1.0;
-          // the exact center row for odd counts lights when level > 0
-          const isCenter = Math.abs(dist) < 0.001;
-          const on = level > 0 && (isCenter ? level > 0.05 : lit);
+          // Normalized distance: 0 at the center pair, 1 at the outer edge.
+          // Comparing directly with level makes the lit height genuinely
+          // proportional; the previous level*half comparison lit nearly every
+          // segment even at quiet levels.
+          const dist = Math.abs(rowIdx - (rows - 1) / 2) / half;
+          const on = level > 0.025 && dist <= level + 0.001;
           const el = children[i] as HTMLElement;
           const wasOn = el.dataset.led === 'on';
           if (wasOn !== on) {
